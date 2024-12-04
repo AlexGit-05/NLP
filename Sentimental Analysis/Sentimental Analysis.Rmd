@@ -1,0 +1,250 @@
+---
+title: "Sentimental Analysis"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+
+```{r message=FALSE, include=FALSE}
+#loading libraries
+library(stringr)
+library(tidyverse)
+library(tidytext)
+library(tokenizers)
+library(ggplot2)
+library(reshape2)
+library(wordcloud)
+library(sentimentr)
+```
+
+Methods for Analyzing Emotions in Twitter User Opinions on Women's Dress Codes during the 2022 Qatar World Cup
+
+## Loading Data
+
+```{r}
+#importing data into R
+Qatar=read.csv("qatar.csv",na.strings = "")
+head(Qatar)
+#str(Qatar)
+```
+
+> The data contains 500255 objectives and 23 variables
+
+## Checking for duplicated tweets
+
+```{r}
+anyDuplicated(Qatar$tweet_id)
+```
+
+> There are no duplicated tweets in the data
+
+# Data Wrangling
+
+## Data Collection:
+
+Twitter data is collected using relevant keywords related to women's dress codes and the 2022 Qatar World Cup. The data was collected from the date range covering the World Cup event.
+
+```{r}
+#subbsetting data where dress is mentioned in the tweet 
+dress_code_tweets=Qatar[grep("\\bdress\\b", Qatar$tweet,perl = F,
+                                ignore.case = T), ]
+#subsetting data with where both dress and woman are mentiond in the same tweet 
+women_dress_code_tweets= dress_code_tweets[grep("\\bwoman|\\bwomen|\\bshe\\b|\\code",
+                                      dress_code_tweets$tweet,
+                                      ignore.case = T), ]
+
+```
+
+Distribution of tweets based on location
+```{r}
+women_dress_code_tweets %>% select(user_location) %>% count(user_location) %>% arrange(desc(n)) %>% head(10)
+```
+
+> Majority of the tweets on women dress code come from Washington DC
+
+
+## Extracting the variable tweets
+
+```{r}
+Tweets=women_dress_code_tweets[,"tweet"]
+Tweets=data.frame(Index=1:length(women_dress_code_tweets$tweet_id),Tweets)
+head(Tweets)
+```
+
+> The index variable introduces is to track down every word from the tweet text later.
+
+# Cleaning tweets
+
+##Data Pre-processing: The collected tweets undergo pre-processing to remove irrelevant information such as URLs, symbols, and special characters.
+
+```{r}
+Clean_Tweets=Tweets %>%
+  dplyr::mutate(Tweets = Tweets,  
+                Tweets = tolower(Tweets),#converting tweets tto lower case
+                Tweets = gsub("@\\S+", "", Tweets),
+                # eliminating the @ tag and white spaces
+                Tweets = gsub("http(s?):\\S+", "", Tweets),
+                  # eliminating the https tag and white spaces
+                Tweets = gsub("#\\S+", "", Tweets),
+                  # eliminating the # tag and white spaces
+                Tweets = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "",
+                                   Tweets),
+                  # eliminating punctuation and white spaces
+                Tweets = gsub("[[:punct:]]", "", Tweets), 
+                
+                Tweets = gsub("<U\\+?[0-9a-fA-F]+>", " ", Tweets),
+                Tweets = gsub("[^\x20-\x7E]", "", Tweets),
+                  # eliminating the digits tag and white spaces
+                Tweets = gsub("[[:digit:]]", "", Tweets),
+                
+                Tweets = gsub("\n", " ", Tweets),
+                Tweets = gsub("^\\s+|\\s+$|\\s+(?=\\s)", "",
+                                   Tweets, perl=T))
+
+```
+
+## Tokenizing the text(converting tweets into words) and eliminating stop words
+
+```{r message=FALSE}
+words_data <- Clean_Tweets %>% select(Tweets)  %>% 
+              unnest_tokens(word, Tweets)%>% anti_join(stop_words)
+
+word_count=words_data %>% count(word, sort = TRUE)
+```
+> The data eliminates english stopwords based on three lexicons sources 
+
+## Visualize the Most Common Words
+
+```{r}
+ggplot(word_count[1:20,1:2],aes(y=word,x=n,label=n))+
+  geom_bar(stat = "identity")+
+  geom_text(hjust=-0.2)+
+  labs(title = "Top 20 words",x="count")
+```
+
+# Sentimental analysis
+
+Sentiment analysis is performed on the pre-processed tweets to classify the expressed emotion as positive, negative, or neutral. 
+## Visualize using Word clouds 
+Classifying the words as positive words and negative words.
+
+```{r message=FALSE,warning=FALSE}
+plot <- words_data %>%
+    inner_join(get_sentiments("bing")) %>%
+    count(word, sentiment, sort = TRUE) %>%
+    acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+    comparison.cloud(colors = c("red", "blue"),max.words = 50)
+```
+
+```{r message=FALSE}
+words_data %>% inner_join(get_sentiments("bing")) %>% filter(sentiment=="negative" | sentiment=="positive") %>% count(word) %>% arrange(desc(n)) %>% head()
+```
+
+
+## Emotion Classification:
+
+The sentiment analysis results is be further classified into specific emotions, which includes fear and anger, using NRC Emotional Lexicon.
+
+```{r message=FALSE}
+Emotion=words_data %>% inner_join(get_sentiments("nrc")) 
+```
+
+
+The classified data will be analyzed to determine the frequency and distribution of fear and anger expressed in the Twitter user opinions on women's dress codes during the 2022 Qatar World Cup.
+```{r}
+EW=Emotion%>% 
+  filter(sentiment=="anger" | sentiment=="fear") %>% 
+  group_by(word,sentiment) %>% count()
+EW
+```
+
+# Variables and operationalizations: 
+
+The independent variable will be the opinion expressed in the tweets concerning women's dress codes during the 2022 Qatar World Cup. The dependent variables will be the emotions of fear and anger, operationalized as scores from the sentiment analysis.
+```{r}
+#Assinging the generated sentiments to the tweets
+
+anger_or_fear=subset(EW[EW$sentiment=="anger",]$word,
+                     EW[EW$sentiment=="anger",]$word %in%
+                       EW[EW$sentiment=="fear",]$word)
+
+#extracting words expressing anger
+words_expressing_anger= subset(EW[EW$sentiment=="anger",]$word,
+                               !EW[EW$sentiment=="anger",]$word %in%
+                                 anger_or_fear)
+#extracting words expressing fear
+words_expressing_fear= subset(EW[EW$sentiment=="fear",]$word,
+                               !EW[EW$sentiment=="fear",]$word %in%
+                                 anger_or_fear)
+
+women_dress_code_tweets[which(grepl(paste(anger_or_fear,collapse = "|"),
+                                   women_dress_code_tweets$tweet)),
+                        "Sentiment"]="Anger/Fear"
+
+women_dress_code_tweets[which(grepl(paste(words_expressing_anger,
+                                          collapse = "|"),
+                                   women_dress_code_tweets$tweet)),
+                        "Sentiment"]="Anger"
+
+women_dress_code_tweets[which(grepl(paste(words_expressing_fear,
+                                          collapse = "|"),
+                                   women_dress_code_tweets$tweet)),
+                        "Sentiment"]="Fear"
+women_dress_code_tweets[which(is.na(women_dress_code_tweets$Sentiment)),
+                        "Sentiment"]="No Sentiment"
+```
+
+```{r}
+New_Data=women_dress_code_tweets[c("tweet","Sentiment")]
+head(New_Data)
+```
+
+## Adding the sentimental scores
+Average sentimental score per tweet
+```{r}
+Sentiment=sentiment(get_sentences(New_Data$tweet)) %>%
+  group_by(element_id) %>% summarise(Average_sentiment=mean(sentiment)) %>% 
+  mutate(Sentiment=New_Data$Sentiment)
+Sentiment
+```
+# Descriptive statistics: 
+The descriptive statistics will be computed for each emotion and for the total sample. The statistics will include the mean, standard deviation and distribution of the scores.
+```{r}
+#Summary of the sentimental analysis
+Sentiment %>% group_by(Sentiment) %>% summarise(Score=sum(Average_sentiment),
+                        Mean=mean(Average_sentiment),
+                        SD=sd(Average_sentiment))
+```
+
+# Uni/bivariate hypothesis tests: 
+To test the hypothesis that the emotions of fear and anger are expressed differently on Twitter concerning women's dress codes during the 2022 Qatar World Cup, we will conduct a t-test and a chi-square test.
+
+## Univariet 
+A t test is conducted to  to ensure that the emotions are significant
+```{r}
+Anger=Sentiment[Sentiment$Sentiment=="Anger",]$Average_sentiment
+#test if average anger is equal to 0
+t.test(Anger)
+Fear=Sentiment[Sentiment$Sentiment=="Fear",]$Average_sentiment
+#test if average fear is equal to 0
+t.test(Fear)
+#test if average anger is equal to average fear
+t.test(Anger,Fear)
+
+#Test for association between anger and fear 
+sentiment=Sentiment%>% 
+  filter(Sentiment=="Anger" | Sentiment=="Fear") %>% 
+  group_by(Sentiment)
+chisq.test(table(sentiment$Sentiment),simulate.p.value = F)
+
+# ANOVA test
+summary(aov(Average_sentiment~Sentiment,data=Sentiment))
+
+```
+
+> the average anger and fear is not equal to 0, and there is no association betweeen anger and fear. this mean that the words can either express fear of anger not both.
+
+
+
